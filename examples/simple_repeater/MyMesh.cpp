@@ -507,6 +507,9 @@ const char *MyMesh::getLogDateTime() {
 }
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
+#ifdef WITH_MQTT_OBSERVER
+  mqttObserver.stageRaw(snr, rssi, raw, len);
+#endif
 #if MESH_PACKET_LOGGING
   Serial.print(getLogDateTime());
   Serial.print(" RAW: ");
@@ -516,6 +519,9 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 }
 
 void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
+#ifdef WITH_MQTT_OBSERVER
+  mqttObserver.capture(pkt, score);
+#endif
   fleet.onHeardPacket(pkt);   // ack repeat confirmation (pre-dedup receive hook)
 
 #ifdef WITH_BRIDGE
@@ -544,6 +550,9 @@ void MyMesh::logRx(mesh::Packet *pkt, int len, float score) {
 }
 
 void MyMesh::logTx(mesh::Packet *pkt, int len) {
+#ifdef WITH_MQTT_OBSERVER
+  mqttObserver.captureTx(pkt);
+#endif
 #ifdef WITH_BRIDGE
   if (_prefs.bridge_pkt_src == 0) {
     bridge.sendPacket(pkt);
@@ -1060,6 +1069,10 @@ void MyMesh::begin(FILESYSTEM *fs) {
   _fs = fs;
   // load persisted prefs
   _cli.loadPrefs(_fs);
+#ifdef WITH_MQTT_OBSERVER
+  mqttObserver.begin(_fs, &self_id, _prefs.node_name, FIRMWARE_VERSION,
+                     _prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+#endif
   acl.load(_fs, self_id);
   filter.begin(fs);
   battGate.begin(fs);
@@ -1402,7 +1415,13 @@ void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply
       sendNodeDiscoverReq();
       strcpy(reply, "OK - Discover sent");
     }
-  } else if (memcmp(command, "filter", 6) == 0 && (command[6] == ' ' || command[6] == 0)) {
+  }
+#ifdef WITH_MQTT_OBSERVER
+  else if (mqttObserver.handleCommand(command, reply)) {
+    // observer configuration and status commands
+  }
+#endif
+  else if (memcmp(command, "filter", 6) == 0 && (command[6] == ' ' || command[6] == 0)) {
     const char* sub = command + 6;
     while (*sub == ' ') sub++;
     filterCLI(filter, sub, reply, &region_map);
@@ -1483,6 +1502,10 @@ void MyMesh::loop() {
 
   // lazy dirty-flag save for the packet filter config
   filter.loop(_fs);
+#ifdef WITH_MQTT_OBSERVER
+  mqttObserver.setRadio(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
+  mqttObserver.loop();
+#endif
 
   // lazy dirty-flag save for the mesh clock sync config
   meshClock.loop(_fs);
@@ -1504,6 +1527,9 @@ void MyMesh::loop() {
 bool MyMesh::hasPendingWork() const {
 #if defined(WITH_BRIDGE)
   if (bridge.isRunning()) return true;  // bridge needs WiFi radio, can't sleep
+#endif
+#ifdef WITH_MQTT_OBSERVER
+  if (mqttObserver.needsAwake()) return true;
 #endif
   return _mgr->getOutboundTotal() > 0;
 }

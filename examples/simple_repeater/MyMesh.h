@@ -40,6 +40,9 @@
 #include "BatteryGate.h"
 #include "FleetManager.h"
 #include "MeshClockSync.h"
+#ifdef WITH_MQTT_OBSERVER
+#include "../mqtt_observer/MQTTObserver.h"
+#endif
 
 #ifdef WITH_BRIDGE
 extern AbstractBridge* bridge;
@@ -104,6 +107,9 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   BatteryGate battGate;
   FleetManager fleet;
   MeshClockSync meshClock;
+#ifdef WITH_MQTT_OBSERVER
+  MQTTObserver mqttObserver;
+#endif
   uint32_t pending_discover_tag;
   unsigned long pending_discover_until;
   bool region_load_active;

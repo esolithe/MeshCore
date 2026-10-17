@@ -16,6 +16,7 @@ Commands:
   build-matching-firmwares <build-match-spec>: Build all firmwares for build targets containing the string given for <build-match-spec>.
   build-companion-firmwares: Build all companion firmwares for all build targets.
   build-repeater-firmwares: Build all repeater firmwares for all build targets.
+  build-observer-firmwares: Build optional MQTT observer firmwares from observer_targets.ini.
   build-room-server-firmwares: Build all chat room server firmwares for all build targets.
 
 Examples:
@@ -199,6 +200,18 @@ build_all_firmwares_by_suffix() {
   done
 }
 
+get_observer_envs() {
+  get_pio_envs_ending_with_string "_repeater_observer"
+}
+
+build_observer_firmwares() {
+  local envs
+  envs=($(get_observer_envs))
+  for env in "${envs[@]}"; do
+    build_firmware "$env"
+  done
+}
+
 build_repeater_firmwares() {
 
 #  # build specific repeater firmwares
@@ -262,6 +275,28 @@ build_firmwares() {
   build_room_server_firmwares
 }
 
+# Target-list queries are also used by the local release builder; they must not
+# clear its persistent artifact directory.
+case $1 in
+  get-companion-firmwares-to-build)
+    get_pio_envs_ending_with_string "_companion_radio_usb"
+    get_pio_envs_ending_with_string "_companion_radio_ble"
+    exit 0
+    ;;
+  get-repeater-firmwares-to-build)
+    get_pio_envs_ending_with_string "_repeater"
+    exit 0
+    ;;
+  get-observer-firmwares-to-build)
+    get_observer_envs
+    exit 0
+    ;;
+  get-room-server-firmwares-to-build)
+    get_pio_envs_ending_with_string "_room_server"
+    exit 0
+    ;;
+esac
+
 # clean build dir
 rm -rf out
 mkdir -p out
@@ -290,15 +325,10 @@ elif [[ $1 == "build-companion-firmwares" ]]; then
   build_companion_firmwares
 elif [[ $1 == "build-repeater-firmwares" ]]; then
   build_repeater_firmwares
+elif [[ $1 == "build-observer-firmwares" ]]; then
+  build_observer_firmwares
 elif [[ $1 == "build-room-server-firmwares" ]]; then
   build_room_server_firmwares
 elif [[ $1 == "build-kiss-radio-firmwares" ]]; then
   build_kiss_modem_firmwares
-elif [[ $1 == "get-companion-firmwares-to-build" ]]; then
-  get_pio_envs_ending_with_string "_companion_radio_usb"
-  get_pio_envs_ending_with_string "_companion_radio_ble"
-elif [[ $1 == "get-repeater-firmwares-to-build" ]]; then
-  get_pio_envs_ending_with_string "_repeater"
-elif [[ $1 == "get-room-server-firmwares-to-build" ]]; then
-  get_pio_envs_ending_with_string "_room_server"
 fi

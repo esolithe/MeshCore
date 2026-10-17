@@ -39,6 +39,7 @@
 #include "PacketFilter.h"
 #include "BatteryGate.h"
 #include "FleetManager.h"
+#include "MeshClockSync.h"
 #ifdef WITH_MQTT_OBSERVER
 #include "../mqtt_observer/MQTTObserver.h"
 #endif
@@ -73,11 +74,11 @@ struct NeighbourInfo {
 };
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "14 Aug 2026"
+  #define FIRMWARE_BUILD_DATE   "15 Oct 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION   "v1.17.1"
+  #define FIRMWARE_VERSION   "v1.18.0"
 #endif
 
 #define FIRMWARE_ROLE "repeater"
@@ -105,6 +106,7 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   FilterRules filter;
   BatteryGate battGate;
   FleetManager fleet;
+  MeshClockSync meshClock;
 #ifdef WITH_MQTT_OBSERVER
   MQTTObserver mqttObserver;
 #endif

@@ -71,7 +71,10 @@
 // --- acknowledgements ---
 
 #ifndef FLEET_REPLY_WINDOW_MS
-  #define FLEET_REPLY_WINDOW_MS 60000UL   // !ack reply jitter window (default)
+  #define FLEET_REPLY_WINDOW_MS 15000UL   // !ack reply jitter window (default):
+                                          // sized for a small fleet; widen with
+                                          // `fleet reply <secs>` as the fleet grows
+                                          // (rule of thumb: ~5 s per repeater)
 #endif
 
 #ifndef FLEET_REPLY_WINDOW_MAX_MS
@@ -84,6 +87,34 @@
 
 #ifndef FLEET_SCHED_STORE
   #define FLEET_SCHED_STORE 2         // armed !at scripts (RAM-only)
+#endif
+
+// --- acknowledgement repeat confirmation ---
+//
+// A reply is re-sent once, byte-identically, when no repeater is heard
+// repeating it within FLEET_ACK_REPEAT_WINDOW_MS. Same frozen timestamp =>
+// same packet hash, so every node that already relayed the first attempt
+// suppresses the copy at the mesh layer: the retry can never duplicate on air.
+// RAM-only, so no FLEET_CFG_VERSION interaction.
+
+#ifndef FLEET_ACK_RETRY
+  #define FLEET_ACK_RETRY 1                   // resend an !ack reply once,
+                                              // byte-identically, if no repeater
+                                              // is heard repeating it;
+                                              // 0 = today's fire-and-forget
+#endif
+
+#ifndef FLEET_ACK_REPEAT_WINDOW_MS
+  #define FLEET_ACK_REPEAT_WINDOW_MS 5000UL   // wait this long for a repeater to
+                                              // repeat the reply before resending.
+                                              // Covers a relay's calcRxDelay, not
+                                              // just a good-link echo
+#endif
+
+#ifndef FLEET_ACK_RETRY_BACKOFF_MS
+  #define FLEET_ACK_RETRY_BACKOFF_MS 1000UL   // re-try delay when the packet pool
+                                              // refused the first send (it used
+                                              // no attempt)
 #endif
 
 // Summary budget for one acknowledgement: the repeater name (max 31, CommonCLI

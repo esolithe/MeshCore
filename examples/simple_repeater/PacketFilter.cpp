@@ -4,7 +4,6 @@
 #include "PacketFilter.h"
 #include "CliUtil.h"
 #include "AdvertRateLimiter.h"
-#include <inttypes.h>
 #include <helpers/TxtDataHelpers.h>
 
 // The well-known Public channel PSK (16 bytes); its sha256()[0] air hash is 0x11.
@@ -277,9 +276,9 @@ static int distinctKeysOnHash(FilterRules& filter, uint8_t hash) {
   return n;
 }
 
-// FNV-1a over the rule's stored predicate fields. Two jobs, deliberately the
-// same bytes: the short digest `filter list` shows per rule, and the per-rule
-// salt of the prob roll (see probDecides()).
+// FNV-1a over the rule's stored predicate fields, the per-rule salt of the prob
+// roll (see probDecides()). It used to also be printed by `filter list` as a
+// short change-indicator digest, until the readable listing replaced that.
 //
 // Its range is the whole persisted record — &action up to &hits — which
 // includes reserved tail padding that is not format-guaranteed. So editing a
@@ -1391,57 +1390,101 @@ static void cliAdd(FilterRules& filter, RegionMap* regions, char* params, char* 
   snprintf(reply, CLI_REPLY_MAX, "OK - rule %d added", idx);
 }
 
-static void cliList(FilterRules& filter, char* reply) {
-  char* out = reply;
-  int remain = CLI_REPLY_MAX;
-  radd(&out, &remain, "%s %d/%d:", filter.isEnabled() ? "on" : "off",
-       filter.getNumRules(), FILTER_MAX_RULES);
-  for (int i = 0; i < filter.getNumRules(); i++) {
-    auto r = filter.getRule(i);
-    radd(&out, &remain, " %d%c%c%03X", i, r->enabled ? 'e' : 'd',
-         r->action == FILTER_ACT_DROP ? 'D' : 'F', ruleDigest(r) & 0xFFF);
-  }
+// Room held back on a `filter list` page so a trailing "\n..." continuation
+// line always fits: 3 dots + newline + NUL.
+#define FILTER_LIST_MARKER 5
+
+// Worst-case single predicate field: the `chan=` name list (up to
+// FILTER_MAX_CHANNELS names, separators and quotes). Every field is rendered
+// whole into a local buffer before it is appended, so a `filter list` line cut
+// for space never shows a partial value.
+#define FILTER_PRED_FIELD_MAX (FILTER_MAX_CHANNELS * FILTER_CHAN_NAME_LEN + 16)
+
+// Append an already-rendered predicate field only when it fits with its NUL;
+// returns false (leaving the buffer untouched) when it does not.
+static bool raddField(char** out, int* remain, const char* field) {
+  int n = (int)strlen(field);
+  if (n + 1 > *remain) return false;
+  memcpy(*out, field, (size_t)n + 1);
+  *out += n;
+  *remain -= n;
+  return true;
 }
 
-static void cliGet(FilterRules& filter, int idx, char* reply) {
-  if (idx < 0 || idx >= filter.getNumRules()) { strcpy(reply, "Err - no such rule"); return; }
-  auto r = filter.getRule(idx);
-  char* out = reply;
-  int remain = CLI_REPLY_MAX;
-  radd(&out, &remain, "r%d %s %s", idx, r->enabled ? "en" : "dis",
+// Close a rule body cut at a field boundary: two dots, deliberately distinct
+// from the three-dot end-of-page marker. Returns false for the caller to relay.
+static bool abbreviateRuleBody(char** out, int* remain) {
+  radd(out, remain, "..");
+  return false;
+}
+
+// "[disabled ]<drop|forward> <predicates>" — one rule in `filter add` syntax,
+// the readable form shared by `filter get` and `filter list`. Writes a
+// NUL-terminated body into `dest` (bounded by `sz`, NUL included) and returns
+// true when the whole body fit. Otherwise it stops at the first predicate field
+// that would not fit, appends ".." at that field boundary, and returns false.
+static bool formatRuleBody(FilterRules& filter, const FilterRule* r, char* dest, size_t sz) {
+  char* out = dest;
+  int remain = (int)sz;
+  // State and action first: enabled is the default and stays silent, and an
+  // abbreviated line must still say what the rule does.
+  radd(&out, &remain, "%s%s", r->enabled ? "" : "disabled ",
        r->action == FILTER_ACT_DROP ? "drop" : "forward");
+
+  char field[FILTER_PRED_FIELD_MAX];
 
   const uint16_t type_all = ruleTypeMask(r);
   if (type_all) {
-    radd(&out, &remain, " type=");
+    int n = snprintf(field, sizeof(field), " type=");
     const char* sep = "";
     for (unsigned i = 0; i < FILTER_TYPE_NAME_COUNT; i++) {
       if (type_all & (1 << FILTER_TYPE_NAMES[i].type)) {
-        radd(&out, &remain, "%s%s", sep, FILTER_TYPE_NAMES[i].name);
+        n += snprintf(field + n, sizeof(field) - (size_t)n, "%s%s", sep, FILTER_TYPE_NAMES[i].name);
         sep = ",";
       }
     }
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
-  if (r->route_mask) radd(&out, &remain, " route=%s",
-                          (r->route_mask & FILTER_ROUTE_FLOOD) ? "flood" : "direct");
+  if (r->route_mask) {
+    snprintf(field, sizeof(field), " route=%s", (r->route_mask & FILTER_ROUTE_FLOOD) ? "flood" : "direct");
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
   char ivs[24];
-  if (r->hops.flags) { formatInterval(r->hops, ivs, sizeof(ivs), IV_UNSIGNED); radd(&out, &remain, " hops=%s", ivs); }
-  if (r->len.flags) { formatInterval(r->len, ivs, sizeof(ivs), IV_UNSIGNED); radd(&out, &remain, " len=%s", ivs); }
-  if (r->snr.flags) { formatInterval(r->snr, ivs, sizeof(ivs), IV_SNR_DB); radd(&out, &remain, " snr=%s", ivs); }
+  if (r->hops.flags) {
+    formatInterval(r->hops, ivs, sizeof(ivs), IV_UNSIGNED);
+    snprintf(field, sizeof(field), " hops=%s", ivs);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
+  if (r->len.flags) {
+    formatInterval(r->len, ivs, sizeof(ivs), IV_UNSIGNED);
+    snprintf(field, sizeof(field), " len=%s", ivs);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
+  if (r->snr.flags) {
+    formatInterval(r->snr, ivs, sizeof(ivs), IV_SNR_DB);
+    snprintf(field, sizeof(field), " snr=%s", ivs);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
   if (r->path.count) {
-    radd(&out, &remain, " path=%s", (r->path.pos & FILTER_PATH_FIRST) ? "^" : "");
+    int n = snprintf(field, sizeof(field), " path=%s", (r->path.pos & FILTER_PATH_FIRST) ? "^" : "");
     for (int e = 0; e < r->path.count; e++) {
-      radd(&out, &remain, "%s", e ? ">" : "");
-      for (int b = 0; b < r->path.len[e]; b++) radd(&out, &remain, "%02X", r->path.bytes[e][b]);
+      n += snprintf(field + n, sizeof(field) - (size_t)n, "%s", e ? ">" : "");
+      for (int b = 0; b < r->path.len[e]; b++)
+        n += snprintf(field + n, sizeof(field) - (size_t)n, "%02X", r->path.bytes[e][b]);
     }
-    radd(&out, &remain, "%s", (r->path.pos & FILTER_PATH_LAST) ? "$" : "");
+    n += snprintf(field + n, sizeof(field) - (size_t)n, "%s", (r->path.pos & FILTER_PATH_LAST) ? "$" : "");
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
   if (r->hash_size_mask) {
-    radd(&out, &remain, " hsize=");
+    int n = snprintf(field, sizeof(field), " hsize=");
     const char* sep = "";
     for (int s = 1; s <= 4; s++) {
-      if (r->hash_size_mask & (1 << (s - 1))) { radd(&out, &remain, "%s%d", sep, s); sep = ","; }
+      if (r->hash_size_mask & (1 << (s - 1))) {
+        n += snprintf(field + n, sizeof(field) - (size_t)n, "%s%d", sep, s);
+        sep = ",";
+      }
     }
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
   if (r->chan_flags & FILTER_CHANFLG_MASK_SET) {
     // quote the whole value when a referenced name contains a space: nextToken
@@ -1451,27 +1494,106 @@ static void cliGet(FilterRules& filter, int idx, char* reply) {
     for (int c = 0; c < filter.getNumChannels(); c++) {
       if ((r->chan_mask & (1u << c)) && strchr(filter.getChannel(c)->name, ' ')) quote = true;
     }
-    radd(&out, &remain, " chan=%s", quote ? "\"" : "");
+    int n = snprintf(field, sizeof(field), " chan=%s", quote ? "\"" : "");
     const char* sep = "";
     for (int c = 0; c < filter.getNumChannels(); c++) {
-      if (r->chan_mask & (1u << c)) { radd(&out, &remain, "%s%s", sep, filter.getChannel(c)->name); sep = ","; }
+      if (r->chan_mask & (1u << c)) {
+        n += snprintf(field + n, sizeof(field) - (size_t)n, "%s%s", sep, filter.getChannel(c)->name);
+        sep = ",";
+      }
     }
-    radd(&out, &remain, "%s", quote ? "\"" : "");
+    n += snprintf(field + n, sizeof(field) - (size_t)n, "%s", quote ? "\"" : "");
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
-  if (r->chan_flags & FILTER_CHANFLG_HASH_SET) radd(&out, &remain, " chanhash=%02X", r->chan_hash);
-  if (r->regions[0]) radd(&out, &remain, " region=%s", r->regions);
+  if (r->chan_flags & FILTER_CHANFLG_HASH_SET) {
+    snprintf(field, sizeof(field), " chanhash=%02X", r->chan_hash);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
+  if (r->regions[0]) {
+    snprintf(field, sizeof(field), " region=%s", r->regions);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
   if (r->sender[0]) {
-    if (strchr(r->sender, ' ')) radd(&out, &remain, " sender=\"%s\"", r->sender);
-    else radd(&out, &remain, " sender=%s", r->sender);
+    if (strchr(r->sender, ' ')) snprintf(field, sizeof(field), " sender=\"%s\"", r->sender);
+    else snprintf(field, sizeof(field), " sender=%s", r->sender);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
   if (r->text[0]) {
-    if (strchr(r->text, ' ')) radd(&out, &remain, " text=\"%s\"", r->text);
-    else radd(&out, &remain, " text=%s", r->text);
+    if (strchr(r->text, ' ')) snprintf(field, sizeof(field), " text=\"%s\"", r->text);
+    else snprintf(field, sizeof(field), " text=%s", r->text);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
   }
-  if (r->prob) radd(&out, &remain, " prob=%u", r->prob);
-  if (r->throttle) radd(&out, &remain, " throttle=%u pass=%lu", r->throttle, (unsigned long)r->throttle_pass);
-  radd(&out, &remain, " hits=%lu", (unsigned long)r->hits);
-  radd(&out, &remain, " air=%lu", (unsigned long)r->air_ms);
+  if (r->prob) {
+    snprintf(field, sizeof(field), " prob=%u", r->prob);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
+  if (r->throttle) {
+    snprintf(field, sizeof(field), " throttle=%u", r->throttle);
+    if (!raddField(&out, &remain, field)) return abbreviateRuleBody(&out, &remain);
+  }
+  return true;
+}
+
+// The per-rule counter tail (`filter get` only), appended after the body.
+static void formatRuleStats(const FilterRule* r, char* dest, size_t sz) {
+  char* out = dest;
+  int remain = (int)sz;
+  radd(&out, &remain, "hits=%lu", (unsigned long)r->hits);
+  if (r->throttle) radd(&out, &remain, " pass=%lu", (unsigned long)r->throttle_pass);
+  radd(&out, &remain, " air=%lus", (unsigned long)(r->air_ms / 1000));
+}
+
+// One `filter list` line: "<idx>: " + the rule body, bounded so the whole line
+// fits `entry_sz` (NUL included). Returns formatRuleBody()'s result (false =
+// the body was cut at a field boundary with "..").
+static bool formatListEntry(FilterRules& filter, int idx, char* entry, size_t entry_sz) {
+  int pfx = snprintf(entry, entry_sz, "%d: ", idx);
+  return formatRuleBody(filter, filter.getRule(idx), entry + pfx, entry_sz - (size_t)pfx);
+}
+
+// List rules from `start`, one "<idx>: <body>" line each. A page that runs out
+// of room ends with a standalone "..." line: run `filter list <last-index + 1>`
+// to continue. A single rule too large for a page is shown abbreviated at a
+// field boundary with "..", never a partial value, so the walk always advances.
+static void cliList(FilterRules& filter, int start, char* reply) {
+  const int n = filter.getNumRules();
+  if (n == 0) { strcpy(reply, "no rules"); return; }
+  if (start >= n) {
+    snprintf(reply, CLI_REPLY_MAX, "Err - start index %d is past the last rule (%d)", start, n - 1);
+    return;
+  }
+
+  char entry[CLI_REPLY_MAX];
+  char* out = reply;
+  int remain = CLI_REPLY_MAX;
+  int i = start;
+  for (; i < n; i++) {
+    int sep = (i > start) ? 1 : 0;
+    // every entry must leave the marker line's room intact, so a cut-off page
+    // can always name where to resume
+    int cap = remain - sep - FILTER_LIST_MARKER;   // chars this entry may use
+    if (cap < 8) break;                            // not enough left for a line: cut here
+    bool whole = formatListEntry(filter, i, entry, (size_t)cap + 1);   // cap chars + NUL
+    if (!whole && i != start) break;   // needs a full line, and the page is not empty
+    radd(&out, &remain, "%s%s", sep ? "\n" : "", entry);
+    if (!whole) { i++; break; }   // an oversized first rule: show the ".." cut, then stop
+  }
+  if (i < n) radd(&out, &remain, "\n...");
+}
+
+static void cliGet(FilterRules& filter, int idx, char* reply) {
+  if (idx < 0 || idx >= filter.getNumRules()) { strcpy(reply, "Err - no such rule"); return; }
+  auto r = filter.getRule(idx);
+  char* out = reply;
+  int remain = CLI_REPLY_MAX;
+  formatRuleBody(filter, r, out, (size_t)remain);
+  int n = (int)strlen(out);
+  out += n;
+  remain -= n;
+  if (remain > 0) {
+    radd(&out, &remain, " ");
+    formatRuleStats(r, out, (size_t)remain);
+  }
 }
 
 static void cliStats(FilterRules& filter, char* reply) {
@@ -1479,9 +1601,9 @@ static void cliStats(FilterRules& filter, char* reply) {
   int remain = CLI_REPLY_MAX;
   // globals first, per-rule hits last: if the reply truncates, hits detail
   // (recoverable via `get N`) is sacrificed before the summary counters
-  radd(&out, &remain, "lim:%lu abort:%lu air:%" PRIu64 ":%u%%; hits:",
+  radd(&out, &remain, "lim:%lu abort:%lu air:%lus:%u%%; hits:",
        (unsigned long)filter.getLimiterDrops(), (unsigned long)filter.getBudgetAborts(),
-       filter.getAirSavedMs(), filter.getAirSavedPercent());
+       (unsigned long)(filter.getAirSavedMs() / 1000), filter.getAirSavedPercent());
   for (int i = 0; i < filter.getNumRules(); i++) {
     radd(&out, &remain, " %d:%lu", i, (unsigned long)filter.getRule(i)->hits);
   }
@@ -1544,8 +1666,18 @@ void filterCLI(FilterRules& filter, const char* command, char* reply, RegionMap*
   } else if (strcmp(cmd, "add") == 0) {
     cliAdd(filter, regions, p, reply);
   } else if (strcmp(cmd, "list") == 0) {
-    if (!cliNoExtra(p, reply, "Err - usage: list")) return;
-    cliList(filter, reply);
+    char* tok = nextToken(&p);
+    int start = 0;
+    if (tok != NULL) {
+      long v;
+      if (!parseIntRange(tok, 0, FILTER_MAX_RULES - 1, &v)) {
+        strcpy(reply, "Err - usage: list [<start-idx>]");
+        return;
+      }
+      start = (int)v;
+    }
+    if (!cliNoExtra(p, reply, "Err - usage: list [<start-idx>]")) return;
+    cliList(filter, start, reply);
   } else if (strcmp(cmd, "get") == 0) {
     int idx;
     if (cliRuleIdx(filter, nextToken(&p), idx, reply)) {

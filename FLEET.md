@@ -59,6 +59,13 @@ group text on that channel:
 set path.hash.mode 1
 ```
 
+**One job = one message.** A job's commands are the *lines of a single group
+text* — write them with line breaks inside one message, not as several
+successive messages. Only a message's first line is checked for the `!id`
+marker, so a bare command sent on its own is treated as ordinary chat and does
+nothing. If you genuinely want two separate things, give each its own `!id`
+key: they are then two independent jobs.
+
 Check it landed:
 
 ```text
@@ -119,6 +126,12 @@ The script is the **text of an ordinary group text message** — companions that
 auto-prepend `name: ` work unchanged, since the script is everything after the
 first `": "`. Only **plain** group text (txt_type 0) can be a script; any other
 text type on the channel is ignored.
+
+**A job is exactly one message.** Every command in the job is a line of *that
+same message*; a job cannot be split across messages. Each message is checked
+for the `!id` marker independently, so `set txdelay 2` followed by a second
+message `set rxdelay 3` is two messages, neither of them a job — the commands
+must be sent together, one line each, in a single message.
 
 ```text
 !id <key>              # line 1, always
@@ -220,13 +233,35 @@ Protocol guarantees, by construction:
    (unscoped otherwise).
 
 **Storm control:** the reply is scheduled at a uniform-random instant in a
-jitter window (default 60 s, node-tunable via `fleet reply <secs>`, 1–600 s)
-measured from when the script *finishes running*. With N nodes in window W and
-~1 s packets, W = 60 s keeps a 10-node fleet essentially collision-free;
-**widen W for denser fleets**. Pending replies (2 slots) are RAM-only: a
-reboot wipes them, so a re-sent `!ack` job after a reboot re-runs *and*
-re-replies. A full reply store drops and counts the reply (`refused`); no
+jitter window (default 15 s, node-tunable via `fleet reply <secs>`, 1–600 s)
+measured from when the script *finishes running*. A reply storm is N
+near-simultaneous packets that all flood and are relayed, so the window has to
+be wide enough to spread them out: **rule of thumb ≈ 5 s per repeater**. A
+3-node fleet is fine at the default; a 10-node fleet wants ~50 s and a
+20-node fleet ~100 s. Widening costs only latency, while a
+too-narrow window costs collisions — when in doubt, widen. Set it per node, or
+fleet-wide from a script (`fleet reply 50`). Pending replies (2 slots) are
+RAM-only: a reboot wipes them, so a re-sent `!ack` job after a reboot re-runs
+*and* re-replies. A full reply store drops and counts the reply (`refused`); no
 reply cooldown in v1 — per-key dedupe already bounds each script to one reply.
+
+**Repeat confirmation and retry:** after a reply floods, the repeater listens
+for a neighbour repeating it. If none is heard within ~5 s, the reply is
+re-sent **once, byte-identically** — same frozen timestamp, so the same on-air
+packet — and then the repeater stops. Because the copy is byte-identical, every
+node that already relayed the first attempt has it in its seen table and
+suppresses the copy at the mesh layer *before* any app or companion sees it: a
+retry can never appear as a duplicate message, and a healthy fleet still shows
+exactly one reply per node. "Heard a repeat" proves a repeater relayed the
+reply; it does **not** prove the operator's companion received it — there is no
+end-to-end ack for flood group text. Each such miss is counted as `rtx` on the
+status line; a climbing `rtx` means replies are not being repeated — likely no
+neighbouring repeater in range, or heavy loss. If the packet pool refuses an
+initial send or retry, it is tried again after the configured backoff; `rtx`
+increments only when the retry is queued. The retry is build-time tunable
+(`FLEET_ACK_RETRY`, `FLEET_ACK_REPEAT_WINDOW_MS`, and
+`FLEET_ACK_RETRY_BACKOFF_MS`), never persisted; build with `FLEET_ACK_RETRY=0`
+to restore the single fire-and-forget send.
 
 ## Inline pauses (`!delay <ms>`)
 
@@ -314,7 +349,7 @@ All commands begin with `fleet`.
 
 | Command | Effect |
 |---|---|
-| `fleet` | Status: `on, chan h=XX, tags 2/8; scripts ran:3 dup:1 noid:0 refused:0; pending 0/2; sched 0/2; seen 2/32; ackq 0/2; badline 0` |
+| `fleet` | Status: `on, chan h=XX, tags 2/8; scripts ran:3 dup:1 noid:0 refused:0; pending 0/2; sched 0/2; seen 2/32; ackq 0/2 await 0 rtx 0; badline 0` |
 | `fleet on` / `fleet off` | Arm / idle the hooks (config preserved either way) |
 | `fleet chan set <psk-hex>` | Set/replace the one fleet channel (16 or 32 bytes hex) — `OK - fleet channel set h=XX (PSK holder = admin)` |
 | `fleet chan clear` | `OK - fleet channel cleared` — receipt stops, queued and armed scripts are cancelled, seen keys and counters kept |
@@ -322,7 +357,7 @@ All commands begin with `fleet`.
 | `fleet tag del <tag>` | `OK - tag xiao deleted` / `Err - tag xiao not set` |
 | `fleet tag list` | `tags: xiao siteA` or `tags: (none) - broadcast scripts only` |
 | `fleet tag clear` | `OK - tags cleared` |
-| `fleet reply [<secs>]` | Query or set the `!ack` jitter window (1–600 s; default 60) |
+| `fleet reply [<secs>]` | Query or set the `!ack` jitter window (1–600 s; default 15) |
 | `fleet seen` | How many job keys are remembered: `seen 2/32` |
 | `fleet seen <key>` | `OK - key <key> seen` / `Err - key <key> not seen` — did this job run here? |
 | `fleet forget <key>` | `OK - key forgotten` — re-arm one job for a deliberate re-run |
@@ -339,6 +374,8 @@ Counter meanings:
 | `badline` | Command lines skipped at run time for being over-long |
 | `sched` | Armed `!at` scripts (`0/2`) |
 | `ackq` | Pending acknowledgements (`0/2`) |
+| `await` | Sent acknowledgements still awaiting a heard repeat (`0/2`) |
+| `rtx` | Replies re-sent because the first attempt was not heard repeated |
 
 ## Two-phase fleet changes (radio presets and other cutovers)
 
@@ -510,9 +547,11 @@ cli[2026-06-12-preset2-cfg] set radio 869.650,62.5,9,5
 | Symptom | Check | Usual cause |
 |---|---|---|
 | Job never ran anywhere | `fleet seen <key>` per node; `noid` counter | Message sent without the `!id` first line, or on the wrong channel |
+| Commands did nothing when sent one at a time | `noid` counter climbing | A job is one message: only the first line is checked for `!id`, so a lone command is ordinary chat; re-send the commands together in one message |
 | Some nodes ran it, some didn't | `refused` counter on the stragglers | Their pending queue was full (a third job arrived before the first drained); re-send the job |
 | Script targets nobody | `fleet tag list` on the nodes | Tag typo (exact matching: `xiao ` ≠ `xiao`); or all nodes lack the tag and `!tags` was present |
 | No `!ack` reply arrived | `ackq` on the node; window too long? | Reply still jittering (up to `reply window` s); store was full (`refused`); or the channel changed between receipt and send |
+| `rtx` climbing | Neighbouring repeaters in range? | Replies are not being heard repeated — likely no neighbouring repeater, or heavy loss; each miss is one extra byte-identical resend (never a duplicate, since nodes that already relayed suppress the copy) |
 | `dup` climbing, nothing changed | — | Normal: re-sends and duplicate flood deliveries |
 | Job ran twice | seen-ring wrap | 33+ distinct jobs this boot evicted the key; re-send deliberately via `forget` semantics |
 | Lines missing from a run | `badline` counter | Lines over the CLI's length limit were skipped — split the job |
@@ -524,7 +563,8 @@ cli[2026-06-12-preset2-cfg] set radio 869.650,62.5,9,5
 
 `fleet off` and `fleet chan clear` stop the fleet at once: receipt stops, and
 every queued, sleeping and armed script is cancelled (its key stays consumed,
-see [Idempotency](#idempotency-at-most-once-per-key-per-boot)). A script that
+see [Idempotency](#idempotency-at-most-once-per-key-per-boot)), as are queued
+and awaiting acknowledgements. A script that
 switches the fleet off runs its remaining lines up to its next `!delay`, and
 nothing after that. `fleet forget <key>` re-arms one job. `filter off` does not stop fleet; the
 [battery gate does not stop fleet either](#battery-supersession).
@@ -544,6 +584,11 @@ exempt for the fleet channel:
   operator chose `!ack`, and it is the operator's call whether to spend
   battery on a response. A battery report from a *low* node is the most
   valuable one.
+
+Fleet members also **emit battery alerts** on the channel: a suspend or resume
+transition is announced as an ordinary `<name>: BATT SUSPEND|RESUME <mV>` group
+text, and these relay while suspended like any other fleet traffic. See
+[BATTERY.md](./BATTERY.md#alerts).
 
 Normal user traffic stays gated exactly as BATTERY.md describes. Decryption is
 unaffected by the gate in the first place; a script executed while suspended
@@ -578,6 +623,8 @@ so it can't be orphaned from a fleet cutover by its own battery state.
 | Pending scripts | 2 — a third before the queue drains is refused, but **not** marked seen; a re-send reaches it |
 | Armed `!at` scripts | 2 (RAM-only; a reboot wipes them) |
 | Pending acknowledgements | 2 (RAM-only; a full store drops and counts) |
+| `!ack` reply window | 1–600 s; default 15 s (~5 s per repeater) |
+| `!ack` repeat confirmation | one byte-identical resend after ~5 s with no repeat heard; RAM-only, build-time tunable (`FLEET_ACK_*`) |
 | Seen job keys | last 32 per boot (RAM-only; a 33rd evicts the oldest and re-arms it) |
 | `!id` key | 1–32 chars of `[A-Za-z0-9._-]` |
 | Tags | up to 8 on a repeater; up to 8 per `!tags` list; 1–16 chars each |

@@ -39,6 +39,7 @@ should not need to explore beyond them before making a change.
   stop for anything about the fleet feature.
 - `BATTERY.md` — battery gate user manual: behavior, what suspension does
   not touch, persistence, CLI reference.
+- `MESHCLOCK.md` — mesh clock sync behavior, CLI, defaults and caveats.
 
 **When behavior changes, the matching guide section is updated in the same
 commit** — the guides are user-facing API documentation, not optional docs.
@@ -50,8 +51,10 @@ commit** — the guides are user-facing API documentation, not optional docs.
 - `FleetManager.h/.cpp` — the fleet feature: one PSK-backed channel, the
   repeater's tag set, `fleetCLI`, the receive-side hook (`onGroupData`), the
   relay-side battery exemption (`checkForward`), acknowledgements (jittered,
-  sent on the captured channel), scheduled `!at` jobs (RAM-only store), and
-  the `/fleet_cfg` persistence (v1 with a whole-payload CRC-16). Owns a
+  one byte-identical retry until a repeat is heard, sent on the captured
+  channel), unsolicited alerts (`sendAlert`, on the
+  configured channel), scheduled `!at` jobs (RAM-only store), and the
+  `/fleet_cfg` persistence (v1 with a whole-payload CRC-16). Owns a
   `CliScriptRunner`.
 - `CliScript.h/.cpp` — the fleet script runner: `!id` parse, the
   `!tags`/`!ack`/`!at` directive block, inline `!delay` with resumable run,
@@ -73,25 +76,31 @@ commit** — the guides are user-facing API documentation, not optional docs.
   wrapper over the vendored engine.
 - `CliUtil.h` — shared CLI helpers (`nextToken`, `radd`, `CLI_REPLY_MAX`)
   used by filter and battery CLIs alike.
-- `BatteryGate.h/.cpp` — low-battery forward suspension, `battery` CLI.
+- `BatteryGate.h/.cpp` — low-battery forward suspension, `battery` CLI, and a
+  RAM-only one-shot suspend/resume transition readout (`takeStateChange`).
+- `MeshClockSync.h/.cpp`, `MeshClockSyncConfig.h`, and `BuildEpoch.h` — advert
+  sample collection, median/quorum decision, enabled-flag persistence and CLI.
 - `MyMesh.cpp/.h` — upstream files carrying the fork's hook lines
-  (`allowPacketForward`, `onGroupDataRecv`, `searchChannelsByHash`, CLI
-  dispatch, lazy-save loop, the `execCliLine` script-execution trampoline and
-  the fleet device-service injections).
+  (`allowPacketForward`, `onGroupDataRecv`, `logRx` (ack repeat detector),
+  `searchChannelsByHash`, CLI
+  dispatch, lazy-save loop, the `execCliLine` script-execution trampoline,
+  the fleet device-service injections and the `batteryAlerts` transition
+  drain).
 - `main.cpp` — serial CLI entry (upstream + fork's buffer-hardening lines).
 
-**Tests:** `test/test_packet_filter/` (295 behavior-level cases: matching,
+**Tests:** `test/test_packet_filter/` (301 behavior-level cases: matching,
 content rules, limiter, persistence upgrades, CLI surface, TinyRegex,
-PatternMatch), `test/test_fleet/` (82 cases: runner grammar, tag targeting,
+PatternMatch), `test/test_fleet/` (112 cases: runner grammar, tag targeting,
 acknowledgements, scheduling, persistence, CLI surface, the battery
-exemption contract) and `test/test_battery_gate/`. Test-only shims:
+exemption contract), `test/test_battery_gate/`, and `test/test_mesh_clock/` (24
+behavior-level cases). Test-only shims:
 `NativeShim.h`, `NativeTestStubs.cpp`, `RegionMapStub.cpp`,
 `FilterTestHelpers.h`.
 
 **Build & CI:** `pio test -e native_packet_filter` / `-e
-native_battery_gate` / `-e native_fleet` (host-native, no hardware), plus
-`-e native_packet_filter_san` / `-e native_battery_gate_san` /
-`-e native_fleet_san` for ASan+UBSan;
+native_battery_gate` / `-e native_fleet` / `-e native_mesh_clock` (host-native,
+no hardware), plus `-e native_packet_filter_san` / `-e native_battery_gate_san` /
+`-e native_fleet_san` / `-e native_mesh_clock_san` for ASan+UBSan;
 firmware via `bash build.sh build-firmware <target>` (`bash build.sh list` —
 `build.sh` uses bash arrays, so `sh` is not a contract), the filter fork's flash
 target being `Xiao_S3_WIO_repeater`. **Compile-check every filesystem
@@ -104,16 +113,19 @@ file type has no default constructor).
 only; the firmware assets are built locally with
 `scripts/local-release-build.sh` and uploaded to the release with `gh`
 (CI no longer builds firmware — the 155-target runner fan-out got Actions
-shut down). `sync-upstream.yml` merges upstream and promotes stable, run
-only on manual dispatch — never on a schedule. Upstream's own docs live in
-`docs/` (MeshCore protocol/CLI generally) — not fork-filter documentation.
+shut down). `sync-upstream.yml` merges upstream into the chosen channel branch
+and `promote-stable.yml` cherry-picks the filter commits from `repeater-filter`
+onto `repeater-filter-stable`; both are manual-dispatch only (never on a
+schedule) and neither cuts a release — use Filter Release for that. Upstream's
+own docs live in `docs/` (MeshCore protocol/CLI generally) — not fork-filter
+documentation.
 
 ## Branch model
 
 - `repeater-filter` — dev release channel; the integration branch for all
   filter work. Default branch of the fork.
 - `repeater-filter-stable` — stable release channel; updated from
-  `repeater-filter` deliberately, not automatically.
+  `repeater-filter` deliberately via `promote-stable.yml`, not automatically.
 - Work branches: `repeater-filter-<topic>` cut from `repeater-filter`, merged
   back with `--no-ff` (keep feature commits traceable).
 - Upstream is tracked via the manually-dispatched `sync-upstream.yml`
@@ -128,8 +140,12 @@ Fork-owned file set (free to edit):
 - `examples/simple_repeater/PatternMatch.h/.cpp`
 - `examples/simple_repeater/CliScript.h/.cpp`
 - `examples/simple_repeater/AdvertRateLimiter.h/.cpp`, `PersistUtil.h`
-- `test/test_packet_filter/`, `test/test_battery_gate/`
-- `FILTER.md`, `FLEET.md`, `.github/workflows/filter-release.yml`, `sync-upstream.yml`
+- `examples/simple_repeater/MeshClockSync.h/.cpp`, `MeshClockSyncConfig.h`,
+  `BuildEpoch.h`
+- `test/test_packet_filter/`, `test/test_battery_gate/`,
+  `test/test_mesh_clock/`
+- `FILTER.md`, `FLEET.md`, `MESHCLOCK.md`, `.github/workflows/filter-release.yml`,
+  `sync-upstream.yml`, `.github/workflows/promote-stable.yml`
 
 Hook lines in upstream files (`MyMesh.h/.cpp`, `main.cpp`) must stay **minimal**
 — a reviewer should see a handful of lines, not a fork interleaved into
@@ -197,8 +213,9 @@ FILTER.md:
   equality via `!tags` (absent = broadcast), the fleet channel is a single
   unnamed PSK that supersedes the battery gate (scripts run, fleet traffic
   relays, acks send while suspended), armed `!at` jobs and pending acks are
-  RAM-only, and script execution is deferred out of the receive path.
-  Changing them is a breaking decision, not a refactor side effect.
+  RAM-only, battery alerts are emitted on the fleet channel only when it is
+  enabled and configured, and script execution is deferred out of the receive
+  path. Changing them is a breaking decision, not a refactor side effect.
 - **New pattern syntax must not silently change the meaning of an
   already-storable pattern.** If it would, either ship an escape (`\|`) or
   reject the ambiguous form with an error. Deliberate exception: `|` became OR
@@ -264,8 +281,8 @@ FILTER.md:
   fails any release target whose `src/`/`examples/` code holds a frame
   >= 2 KB (formerly a filter-release.yml CI check) — keep new frames well
   under it.
-- Pure refactors keep both suites green **unchanged** — the suites (295 filter,
-  82 fleet, 44 battery) are the safety net that proves no behavior slipped.
+- Pure refactors keep both suites green **unchanged** — the suites (301 filter,
+  112 fleet, 50 battery) are the safety net that proves no behavior slipped.
 - Run both suites, then re-read the diff:
 
 ```

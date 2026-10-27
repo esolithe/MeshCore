@@ -1,0 +1,68 @@
+# Per-area provisioning overlay for repeater (Manchester).
+# This file is embedded instead of init_cmds.txt when the pio env sets
+# custom_init_cmds_area = Manchester (see area_targets.ini) — or when the
+# build runs with INIT_CMDS_AREA=Manchester.
+#
+# Same format as init_cmds.txt: '#! <name>' starts a versioned section,
+# '#! end' closes it; the node resumes after the last completed section.
+
+#! v1-setup-defaults
+# sensible defaults
+set path.hash.mode 1
+set multi.acks 1
+set loop.detect minimal
+set advert.interval 237
+set flood.advert.interval 35
+set path.hash.mode 1
+# help for stable direct messages
+set rxdelay 3
+set txdelay 0.3
+# add default filters
+filter ratelimit advert 48
+# 0
+filter add type=req,anonreq hops=[8,*]
+# 1
+filter add hsize=1 hops=[32,*]
+# 2
+filter add chan=#public,#Public region=unscoped hops=[16,*] throttle=10
+# 3
+filter add chan=#public,#Public region=unscoped hops=[24,*] throttle=30
+# 4
+filter add chan=#wardriving,#Wardriving hops=[2,*]
+# 5
+filter add chan=#test,#Test,#testing,#ping,#junk region=unscoped hops=[8,*] throttle=60
+# 6
+filter add chan=#bot,#bots region=unscoped hops=[8,*] throttle=60
+filter on
+# enable auto clock sync for better consistency
+clock mesh on
+#! end
+#! v1.1-setup-manchester
+# Radio config (for UK)
+set radio 869.618,62.5,8,8
+set dutycycle 10
+# Region set up: 
+# Adds the main northwest region, along with neighbouring regions. 
+# Sets your repeater to introduce itself to the region, rather than the whole world
+region default northwest
+region put northwest
+region put gb-eng-nw
+region put yorkshire
+# (Optional) Adds the Manchester regions.
+region put greatermanchester northwest
+region put manchester greatermanchester
+region put rochdale greatermanchester
+region put bury greatermanchester
+region save
+# Update filters
+# 7
+filter add region=#northwest,#yorkshire action=forward
+# 8
+filter add region=#manchester,#greatermanchester action=forward
+# 9
+filter add region=#bury,#rochdale action=forward
+# 7 -> 0, 8 -> 1, 9 -> 2
+filter move 9 0
+filter move 9 0
+filter move 9 0
+#! end

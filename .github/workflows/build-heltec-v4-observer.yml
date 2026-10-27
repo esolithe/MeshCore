@@ -1,0 +1,56 @@
+name: Build Heltec V4 Observer Firmware
+
+permissions:
+  contents: read
+
+# Automatic build of the heltec_v4_repeater_observer target. This is the one
+# firmware the provisioning patch (init_cmds.txt -> embedded command list)
+# targets, so every push that touches the list, the provisioning hook, or the
+# firmware sources rebuilds it and publishes the binary as a workflow artifact
+# ready to flash. Also runnable manually from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'init_cmds.txt'
+      - 'platformio.ini'
+      - 'observer_targets.ini'
+      - 'scripts/gen_init_cmds.py'
+      - 'examples/simple_repeater/**'
+      - 'src/**'
+      - 'include/**'
+      - 'lib/**'
+      - 'variants/**'
+      - 'arch/**'
+      - '.github/workflows/build-heltec-v4-observer.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # generic target + per-area variants (area_targets.ini); each embeds
+        # its own init_cmds_<Area>.txt (or the generic init_cmds.txt)
+        target: [heltec_v4_repeater_observer, heltec_v4_repeater_observer_manchester]
+    steps:
+
+      - name: Clone Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Build Environment
+        uses: ./.github/actions/setup-build-environment
+
+      - name: Build Firmware
+        env:
+          FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+        run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
+
+      - name: Upload Workflow Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: "${{ matrix.target }}"
+          path: out

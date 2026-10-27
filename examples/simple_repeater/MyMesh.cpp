@@ -1,4 +1,6 @@
 #include "MyMesh.h"
+#include "InitScript.h"
+
 #include <algorithm>
 
 /* ------------------------------ Config -------------------------------- */

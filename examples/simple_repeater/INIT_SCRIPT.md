@@ -81,9 +81,7 @@ clock, region defs) belongs in `init_cmds.txt`.
 One provisioning list per area, selected at build time — the firmware is
 unchanged; only the embedded file differs.
 
-- **pio env**: per-area variants live in `area_targets.ini`. Each sets
-  `custom_init_cmds_area = <Area>` and extends a base target; the hook embeds
-  `init_cmds_<Area>.txt` from the project root. Build with
+- **pio env**: The hook embeds `init_cmds_<Area>.txt` from the project root. Build with
   `sh build.sh build-firmware heltec_v4_repeater_observer_manchester`.
 - **OS env**: `INIT_CMDS_AREA=Manchester sh build.sh build-firmware <target>`
   selects the file for any target without a dedicated env.
@@ -93,8 +91,7 @@ unchanged; only the embedded file differs.
   error**, never a silent fallback to the generic list.
 - **CI**: the Heltec V4 workflow builds a matrix of the generic target plus
   the per-area envs; artifacts are named per target.
-- To add an area: create `init_cmds_<Area>.txt`, clone one env in
-  `area_targets.ini` (6 lines), add the target to the CI matrix. Sections
+- To add an area: create `init_cmds_<Area>.txt`. Sections
   (`#! … #! end`) work per area file exactly as in the main list, so each
   area's list still grows over time with per-node resume.
 

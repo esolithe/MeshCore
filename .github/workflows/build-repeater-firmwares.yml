@@ -5,6 +5,27 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      include_init_area_variants:
+        description: Build all init_cmds_<Area>.txt variants as matrix rows
+        required: false
+        type: boolean
+        default: false
+      target_allowlist_regex:
+        description: Regex whitelist for repeater targets (empty = all)
+        required: false
+        type: string
+        default: ''
+      init_area_allowlist_regex:
+        description: Regex whitelist for init areas (__default__ and/or area names)
+        required: false
+        type: string
+        default: ''
+      max_matrix_size:
+        description: Hard cap on generated matrix size (GitHub max is 256)
+        required: false
+        type: string
+        default: '256'
   push:
     tags:
       - 'repeater-*'
@@ -15,7 +36,7 @@ jobs:
     with:
       firmware_type: 'repeater'
       release_title_prefix: 'Repeater Firmware'
-      include_init_area_variants: 'false'
-      target_allowlist_regex: ''
-      init_area_allowlist_regex: ''
-      max_matrix_size: 256
+      include_init_area_variants: ${{ github.event_name == 'workflow_dispatch' && inputs.include_init_area_variants || 'false' }}
+      target_allowlist_regex: ${{ github.event_name == 'workflow_dispatch' && inputs.target_allowlist_regex || '' }}
+      init_area_allowlist_regex: ${{ github.event_name == 'workflow_dispatch' && inputs.init_area_allowlist_regex || '' }}
+      max_matrix_size: ${{ github.event_name == 'workflow_dispatch' && inputs.max_matrix_size || '256' }}

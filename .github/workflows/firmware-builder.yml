@@ -23,8 +23,8 @@ on:
         default: ''
       max_matrix_size:
         required: false
-        type: number
-        default: 256
+        type: string
+        default: '256'
 
 jobs:
 
@@ -92,6 +92,11 @@ jobs:
           fi
 
           MATRIX_COUNT=$(echo "$MATRIX_JSON" | jq 'length')
+          if ! [[ "$MAX_MATRIX_SIZE" =~ ^[0-9]+$ ]]; then
+            echo "::error::max_matrix_size must be a positive integer, got '$MAX_MATRIX_SIZE'."
+            exit 1
+          fi
+
           if [[ "$MATRIX_COUNT" -eq 0 ]]; then
             echo "::error::No firmware builds selected. Check target_allowlist_regex/init_area_allowlist_regex and include_init_area_variants settings."
             exit 1

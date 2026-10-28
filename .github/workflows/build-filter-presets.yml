@@ -24,8 +24,8 @@ on:
       max_matrix_size:
         description: Hard cap on generated matrix size (GitHub max is 256)
         required: false
-        type: number
-        default: 256
+        type: string
+        default: '256'
 
 jobs:
   build-filter-presets:

@@ -9,6 +9,22 @@ on:
       release_title_prefix:
         required: true
         type: string
+      include_init_area_variants:
+        required: false
+        type: string
+        default: 'false'
+      target_allowlist_regex:
+        required: false
+        type: string
+        default: ''
+      init_area_allowlist_regex:
+        required: false
+        type: string
+        default: ''
+      max_matrix_size:
+        required: false
+        type: number
+        default: 256
 
 jobs:
 
@@ -26,21 +42,35 @@ jobs:
 
       - name: Get Build Targets
         id: get-build-targets
+        env:
+          INCLUDE_INIT_AREA_VARIANTS: ${{ inputs.include_init_area_variants }}
+          TARGET_ALLOWLIST_REGEX: ${{ inputs.target_allowlist_regex }}
+          INIT_AREA_ALLOWLIST_REGEX: ${{ inputs.init_area_allowlist_regex }}
+          MAX_MATRIX_SIZE: ${{ inputs.max_matrix_size }}
         run: |
           # get list of firmwares to build
           TARGET_LIST=$(/usr/bin/env bash build.sh get-${{ inputs.firmware_type }}-firmwares-to-build)
+          TARGET_JSON=$(printf '%s\n' "$TARGET_LIST" | jq -R -s -c 'split("\n") | map(select(length > 0))')
 
           if [[ "${{ inputs.firmware_type }}" == "repeater" ]]; then
-            AREA_LIST=$(/usr/bin/env bash build.sh get-init-cmd-areas-to-build)
+            if [[ "$INCLUDE_INIT_AREA_VARIANTS" == "true" ]]; then
+              AREA_LIST=$(/usr/bin/env bash build.sh get-init-cmd-areas-to-build)
+            else
+              AREA_LIST="__default__"
+            fi
+
+            AREA_JSON=$(printf '%s\n' "$AREA_LIST" | jq -R -s -c 'split("\n") | map(select(length > 0))')
             MATRIX_JSON=$(jq -cn \
-              --arg targets "$TARGET_LIST" \
-              --arg areas "$AREA_LIST" \
+              --argjson targets "$TARGET_JSON" \
+              --argjson areas "$AREA_JSON" \
+              --arg targetRx "$TARGET_ALLOWLIST_REGEX" \
+              --arg areaRx "$INIT_AREA_ALLOWLIST_REGEX" \
               '
-                ($targets | split("\n") | map(select(length > 0))) as $t
-                | ($areas | split("\n") | map(select(length > 0))) as $a
+                (if $targetRx == "" then $targets else [ $targets[] | select(test($targetRx; "i")) ] end) as $selectedTargets
+                | (if $areaRx == "" then $areas else [ $areas[] | select(test($areaRx; "i")) ] end) as $selectedAreas
                 | [
-                    $t[] as $target
-                    | $a[] as $area
+                    $selectedTargets[] as $target
+                    | $selectedAreas[] as $area
                     | (if $area == "__default__" then "init-default" else ("init-" + ($area | ascii_downcase | gsub("[^a-z0-9]+"; "-"))) end) as $suffix
                     | {
                         target: $target,
@@ -52,11 +82,29 @@ jobs:
                   ]
               ')
           else
-            MATRIX_JSON=$(jq -cn --arg targets "$TARGET_LIST" '
-              ($targets | split("\n") | map(select(length > 0)))
+            MATRIX_JSON=$(jq -cn \
+              --argjson targets "$TARGET_JSON" \
+              --arg targetRx "$TARGET_ALLOWLIST_REGEX" \
+              '
+              (if $targetRx == "" then $targets else [ $targets[] | select(test($targetRx; "i")) ] end)
               | map({ target: ., init_area: "", init_area_env: "", artifact_suffix: "", artifact_name: . })
             ')
           fi
+
+          MATRIX_COUNT=$(echo "$MATRIX_JSON" | jq 'length')
+          if [[ "$MATRIX_COUNT" -eq 0 ]]; then
+            echo "::error::No firmware builds selected. Check target_allowlist_regex/init_area_allowlist_regex and include_init_area_variants settings."
+            exit 1
+          fi
+
+          if [[ "$MATRIX_COUNT" -gt "$MAX_MATRIX_SIZE" ]]; then
+            echo "::error::Matrix has $MATRIX_COUNT jobs, exceeding max $MAX_MATRIX_SIZE. Narrow target_allowlist_regex or disable include_init_area_variants."
+            exit 1
+          fi
+
+          TARGET_COUNT=$(echo "$MATRIX_JSON" | jq '[.[].target] | unique | length')
+          AREA_COUNT=$(echo "$MATRIX_JSON" | jq '[.[].init_area] | unique | length')
+          echo "Building $MATRIX_COUNT jobs from $TARGET_COUNT targets across $AREA_COUNT init area set(s)."
 
           echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 

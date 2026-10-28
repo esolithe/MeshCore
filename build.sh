@@ -59,6 +59,50 @@ get_pio_envs() {
   pio project config | grep '^env:' | sed 's/env://'
 }
 
+# list envs containing a token, excluding area overlay envs that set
+# custom_init_cmds_area/custom_init_cmds_file
+get_envs_containing_token_excluding_area_overlays() {
+  local token_lc
+  token_lc=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  printf '%s' "$PIO_CONFIG_JSON" | python3 -c "
+import sys, json
+token = sys.argv[1]
+data = json.load(sys.stdin)
+for section, options in data:
+    if not section.startswith('env:'):
+        continue
+    env_name = section[4:]
+    if token not in env_name.lower():
+        continue
+    keys = {key for key, _ in options}
+    if 'custom_init_cmds_area' in keys or 'custom_init_cmds_file' in keys:
+        continue
+    print(env_name)
+" "$token_lc"
+}
+
+get_repeater_envs() {
+  get_envs_containing_token_excluding_area_overlays "_repeater"
+}
+
+get_init_cmd_areas() {
+  shopt -s nullglob
+  local path area
+  local areas=()
+  for path in init_cmds_*.txt; do
+    area=${path#init_cmds_}
+    area=${area%.txt}
+    if [[ -n "$area" ]]; then
+      areas+=("$area")
+    fi
+  done
+
+  echo "__default__"
+  if [[ ${#areas[@]} -gt 0 ]]; then
+    printf '%s\n' "${areas[@]}" | sort -fu
+  fi
+}
+
 # Catch cries for help before doing anything else.
 case $1 in
   help|usage|-h|--help)
@@ -144,8 +188,12 @@ build_firmware() {
   FIRMWARE_VERSION_STRING="${FIRMWARE_VERSION}-${COMMIT_HASH}"
 
   # craft filename
-  # e.g: RAK_4631_Repeater-v1.0.0-SHA
-  FIRMWARE_FILENAME="$1-${FIRMWARE_VERSION_STRING}"
+  # e.g: RAK_4631_Repeater-v1.0.0-SHA or RAK_4631_Repeater-init-manchester-v1.0.0-SHA
+  if [ -n "${FIRMWARE_FILENAME_SUFFIX}" ]; then
+    FIRMWARE_FILENAME="$1-${FIRMWARE_FILENAME_SUFFIX}-${FIRMWARE_VERSION_STRING}"
+  else
+    FIRMWARE_FILENAME="$1-${FIRMWARE_VERSION_STRING}"
+  fi
 
   # add firmware version info to end of existing platformio build flags in environment vars
   export PLATFORMIO_BUILD_FLAGS="${PLATFORMIO_BUILD_FLAGS} -DFIRMWARE_BUILD_DATE='\"${FIRMWARE_BUILD_DATE}\"' -DFIRMWARE_VERSION='\"${FIRMWARE_VERSION_STRING}\"'"
@@ -201,7 +249,7 @@ build_all_firmwares_by_suffix() {
 }
 
 get_observer_envs() {
-  get_pio_envs_ending_with_string "_repeater_observer"
+  get_envs_containing_token_excluding_area_overlays "_repeater_observer"
 }
 
 build_observer_firmwares() {
@@ -222,8 +270,13 @@ build_repeater_firmwares() {
 #  build_firmware "LilyGo_T3S3_sx1262_Repeater"
 #  build_firmware "RAK_4631_Repeater"
 
-  # build all repeater firmwares
-  build_all_firmwares_by_suffix "_repeater"
+  # build all repeater templates (area variants are selected at build time via
+  # INIT_CMDS_AREA, not by cloning pio envs)
+  local envs
+  envs=($(get_repeater_envs))
+  for env in "${envs[@]}"; do
+    build_firmware "$env"
+  done
 
 }
 
@@ -285,11 +338,15 @@ case $1 in
     exit 0
     ;;
   get-repeater-firmwares-to-build)
-    get_pio_envs_ending_with_string "_repeater"
+    get_repeater_envs
     exit 0
     ;;
   get-observer-firmwares-to-build)
     get_observer_envs
+    exit 0
+    ;;
+  get-init-cmd-areas-to-build)
+    get_init_cmd_areas
     exit 0
     ;;
   get-room-server-firmwares-to-build)

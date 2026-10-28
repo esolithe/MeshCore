@@ -15,7 +15,7 @@ jobs:
   generate-build-matrix:
     runs-on: ubuntu-latest
     outputs:
-      targets: ${{ steps.get-build-targets.outputs.targets }}
+      matrix: ${{ steps.get-build-targets.outputs.matrix }}
     steps:
 
       - name: Clone Repo
@@ -29,12 +29,36 @@ jobs:
         run: |
           # get list of firmwares to build
           TARGET_LIST=$(/usr/bin/env bash build.sh get-${{ inputs.firmware_type }}-firmwares-to-build)
-          
-          # convert targets separated by new line into a json array string
-          JSON_ARRAY=$(echo "$TARGET_LIST" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-          
-          # use json array as targets result
-          echo "targets=$JSON_ARRAY" >> $GITHUB_OUTPUT
+
+          if [[ "${{ inputs.firmware_type }}" == "repeater" ]]; then
+            AREA_LIST=$(/usr/bin/env bash build.sh get-init-cmd-areas-to-build)
+            MATRIX_JSON=$(jq -cn \
+              --arg targets "$TARGET_LIST" \
+              --arg areas "$AREA_LIST" \
+              '
+                ($targets | split("\n") | map(select(length > 0))) as $t
+                | ($areas | split("\n") | map(select(length > 0))) as $a
+                | [
+                    $t[] as $target
+                    | $a[] as $area
+                    | (if $area == "__default__" then "init-default" else ("init-" + ($area | ascii_downcase | gsub("[^a-z0-9]+"; "-"))) end) as $suffix
+                    | {
+                        target: $target,
+                        init_area: $area,
+                        init_area_env: (if $area == "__default__" then "" else $area end),
+                        artifact_suffix: $suffix,
+                        artifact_name: ($target + "-" + $suffix)
+                      }
+                  ]
+              ')
+          else
+            MATRIX_JSON=$(jq -cn --arg targets "$TARGET_LIST" '
+              ($targets | split("\n") | map(select(length > 0)))
+              | map({ target: ., init_area: "", init_area_env: "", artifact_suffix: "", artifact_name: . })
+            ')
+          fi
+
+          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
 
   build:
     needs: generate-build-matrix
@@ -42,7 +66,7 @@ jobs:
     continue-on-error: true # don't fail entire build if one board fails to build
     strategy:
       matrix:
-        target: ${{ fromJson(needs.generate-build-matrix.outputs.targets) }}
+        include: ${{ fromJson(needs.generate-build-matrix.outputs.matrix) }}
       fail-fast: false # don't cancel other builds if one board fails to build
     steps:
 
@@ -55,12 +79,14 @@ jobs:
       - name: Build Firmware
         env:
           FIRMWARE_VERSION: ${{ env.GIT_TAG_VERSION }}
+          INIT_CMDS_AREA: ${{ matrix.init_area_env }}
+          FIRMWARE_FILENAME_SUFFIX: ${{ matrix.artifact_suffix }}
         run: /usr/bin/env bash build.sh build-firmware ${{ matrix.target }}
 
       - name: Upload Workflow Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: "${{ matrix.target }}"
+          name: "${{ matrix.artifact_name }}"
           path: out
 
   create-release:

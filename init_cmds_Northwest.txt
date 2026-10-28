@@ -1,0 +1,46 @@
+#! v1-setup-defaults
+# sensible defaults
+set path.hash.mode 1
+set multi.acks 1
+set loop.detect minimal
+set advert.interval 237
+set flood.advert.interval 35
+# help for stable direct messages
+set rxdelay 3
+set txdelay 0.3
+# add default filters
+filter ratelimit advert 48
+# 0
+filter add type=req,anonreq hops=[8,*]
+# 1
+filter add hsize=1 hops=[32,*]
+# 2
+filter add chan=#public,#Public region=unscoped hops=[16,*] throttle=10
+# 3
+filter add chan=#public,#Public region=unscoped hops=[24,*] throttle=30
+# 4
+filter add chan=#wardriving,#Wardriving hops=[2,*]
+# 5
+filter add chan=#test,#Test,#testing,#ping,#junk region=unscoped hops=[8,*] throttle=60
+# 6
+filter add chan=#bot,#bots region=unscoped hops=[8,*] throttle=60
+filter on
+# enable auto clock sync for better consistency
+clock mesh on
+#! end
+#! v1.1-setup-uk
+# Radio config (for UK)
+set radio 869.618,62.5,8,8
+set dutycycle 10
+#! end
+#! v1.2-setup-northwest
+# Adds the main northwest regions, along with neighbouring regions. Also adds filters to bypass if regions are used.
+# Sets your repeater to introduce itself to the region, rather than the whole world
+region put northwest
+region default northwest
+region put gb-eng-nw
+region put yorkshire
+region save
+filter add region=#northwest,#yorkshire action=forward
+filter move 7 0
+#! end

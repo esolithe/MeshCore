@@ -19,7 +19,6 @@ wrong provisioning. The default path stays optional for trees without any
 provisioning.
 
 Wired from [arduino_base] extra_scripts; runs before every Arduino build.
-Per-area pio envs live in area_targets.ini (see INIT_SCRIPT.md).
 """
 import os
 from SCons.Script import Import  # platformio provides SCons in the script env

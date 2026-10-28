@@ -15,7 +15,7 @@ on:
         description: Regex whitelist for repeater targets
         required: false
         type: string
-        default: '(heltec|wsl3).*(repeater|repeater_observer)'
+        default: '^(heltec_v4(_r8)?|heltec_v4_tft|heltec_v4_expansionkit|heltec_v4_r8_tft|Heltec_v3|Heltec_WSL3).*(_repeater|_repeater_observer)$'
       init_area_allowlist_regex:
         description: Regex whitelist for init areas (__default__ and/or area names)
         required: false

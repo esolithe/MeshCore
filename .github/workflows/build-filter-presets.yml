@@ -1,37 +1,39 @@
-name: Build Repeater Provisioning Variants
+name: Build Filter Presets (Heltec)
 
 permissions:
   contents: write
 
-# Automatic build of repeater templates across every provisioning area file
-# (init_cmds_<Area>.txt), plus the default init_cmds.txt path. The matrix is
-# discovered via build.sh and firmware-builder.yml; no hardcoded target list.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - repeater-filter
-      - repeater-filter-stable
-    paths:
-      - 'init_cmds.txt'
-      - 'init_cmds_*.txt'
-      - 'area_targets.ini'
-      - 'platformio.ini'
-      - 'observer_targets.ini'
-      - 'build.sh'
-      - 'scripts/gen_init_cmds.py'
-      - 'examples/simple_repeater/**'
-      - 'src/**'
-      - 'include/**'
-      - 'lib/**'
-      - 'variants/**'
-      - 'arch/**'
-      - '.github/workflows/firmware-builder.yml'
-      - '.github/workflows/build-heltec-v4-observer.yml'
+    inputs:
+      include_init_area_variants:
+        description: Build all init_cmds_<Area>.txt variants as matrix rows
+        required: false
+        type: boolean
+        default: true
+      target_allowlist_regex:
+        description: Regex whitelist for repeater targets
+        required: false
+        type: string
+        default: '(heltec|wsl3).*(repeater|repeater_observer)'
+      init_area_allowlist_regex:
+        description: Regex whitelist for init areas (__default__ and/or area names)
+        required: false
+        type: string
+        default: ''
+      max_matrix_size:
+        description: Hard cap on generated matrix size (GitHub max is 256)
+        required: false
+        type: number
+        default: 256
 
 jobs:
-  build-repeater-provisioning-variants:
+  build-filter-presets:
     uses: ./.github/workflows/firmware-builder.yml
     with:
       firmware_type: 'repeater'
       release_title_prefix: 'Repeater Firmware'
+      include_init_area_variants: ${{ inputs.include_init_area_variants }}
+      target_allowlist_regex: ${{ inputs.target_allowlist_regex }}
+      init_area_allowlist_regex: ${{ inputs.init_area_allowlist_regex }}
+      max_matrix_size: ${{ inputs.max_matrix_size }}

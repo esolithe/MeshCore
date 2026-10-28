@@ -1,0 +1,37 @@
+name: Build Repeater Provisioning Variants
+
+permissions:
+  contents: write
+
+# Automatic build of repeater templates across every provisioning area file
+# (init_cmds_<Area>.txt), plus the default init_cmds.txt path. The matrix is
+# discovered via build.sh and firmware-builder.yml; no hardcoded target list.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - repeater-filter
+      - repeater-filter-stable
+    paths:
+      - 'init_cmds.txt'
+      - 'init_cmds_*.txt'
+      - 'area_targets.ini'
+      - 'platformio.ini'
+      - 'observer_targets.ini'
+      - 'build.sh'
+      - 'scripts/gen_init_cmds.py'
+      - 'examples/simple_repeater/**'
+      - 'src/**'
+      - 'include/**'
+      - 'lib/**'
+      - 'variants/**'
+      - 'arch/**'
+      - '.github/workflows/firmware-builder.yml'
+      - '.github/workflows/build-heltec-v4-observer.yml'
+
+jobs:
+  build-repeater-provisioning-variants:
+    uses: ./.github/workflows/firmware-builder.yml
+    with:
+      firmware_type: 'repeater'
+      release_title_prefix: 'Repeater Firmware'

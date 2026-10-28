@@ -47,7 +47,7 @@ public:
   uint8_t agc_reset_interval = 0;  // secs / 4
   char default_scope_name[31];
   uint8_t default_scope_key[16];
-  int8_t tz_offset = 0;
+  float tz_offset = 0;
 #ifdef ENABLE_WIFI_INTERFACE
   #ifndef WIFI_SSID
     #define WIFI_SSID ""
@@ -102,8 +102,8 @@ private:
     void setIntThresh(uint8_t t) override { _parent->interference_threshold = t; markDirty(); }
     uint8_t getRxGain() const override { return _parent->rx_boosted_gain; }
     void setRxGain(uint8_t g) override { _parent->rx_boosted_gain = g; markDirty(); }
-    uint8_t getTxPower() const override { return _parent->tx_power_dbm; }
-    void setTxPower(uint8_t dbm) override { _parent->tx_power_dbm = dbm; markDirty(); }
+    int8_t getTxPower() const override { return _parent->tx_power_dbm; }
+    void setTxPower(int8_t dbm) override { _parent->tx_power_dbm = dbm; markDirty(); }
     float getRxDelay() const override { return _parent->rx_delay_base; }
     void setRxDelay(float d) override { _parent->rx_delay_base = d; markDirty(); }
     uint16_t getAgcResetInt() const override { return _parent->agc_reset_interval * 4; }

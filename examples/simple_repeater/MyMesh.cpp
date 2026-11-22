@@ -1,5 +1,6 @@
 #include "MyMesh.h"
 #include <helpers/PowerProfile.h>
+#include "InitScript.h"
 #include <algorithm>
 
 /* ------------------------------ Config -------------------------------- */
@@ -1801,6 +1802,12 @@ void MyMesh::loop() {
   // dispatch and privilege as the serial console). Also sends due ack replies.
   fleet.loop(_fs);
   fleet.runScripts(execCliLine, this);
+
+  // First-boot provisioning: if the flash image or an operator provided
+  // /init_cmds.txt, run it once through the same serial-privilege dispatch
+  // (see InitScript.h) — after the fleet drain, so an init script and a
+  // queued fleet job never share a pass.
+  runInitScript(*this, _fs);
 
   // update uptime
   uint32_t now = millis();

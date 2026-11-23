@@ -41,3 +41,16 @@ filter move 7 1
 filter move 7 1
 filter move 7 1
 #! end
+#! v1.5 Further filter refinement testing
+filter del 0
+filter add type=req,anonreq,response hops=[8,*]
+filter move 7 0
+filter move 4 1
+filter add hsize=1 hops=[32,*] throttle=90 type=txt action=forward
+filter move 8 1
+filter add hsize=1 hops=[48,*] throttle=120 type=txt action=forward
+filter move 9 1
+filter add type=path,trace hops=[8,*] throttle=180
+filter add hsize=1 hops=[32,*] chan=Public,#public,#Public
+filter move 11 1
+#! end

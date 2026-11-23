@@ -64,3 +64,21 @@ filter move 9 3
 filter move 9 3
 filter move 9 3
 #! end
+#! v1.5 Further filter refinement testing
+filter del 2
+filter add type=req,anonreq,response hops=[8,*]
+filter move 9 2
+filter add hsize=1 hops=[32,*] throttle=90 type=txt action=forward
+filter move 6 3
+filter move 10 3
+filter add hsize=1 hops=[48,*] throttle=120 type=txt action=forward
+filter move 11 3
+filter add type=path,trace hops=[8,*] throttle=180
+filter add hsize=1 hops=[32,*] chan=Public,#public,#Public
+filter move 13 3
+region put lincolnshire
+region put derbyshire
+region save
+filter add region=lincolnshire,derbyshire action=forward
+filter move 14 2
+#! end

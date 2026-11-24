@@ -79,5 +79,5 @@ filter add hsize=1 hops=[48,*] throttle=120 type=txt action=forward
 filter move 12 4
 filter add type=path,trace hops=[8,*] throttle=180
 filter add hsize=1 hops=[32,*] chan=Public,#public,#Public
-filter move 15 4
+filter move 14 4
 #! end
